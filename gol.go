@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
 	// Markers of which cells should be killed/resurrected
 	var marked []cell
+	var wg sync.WaitGroup
+	var m sync.Mutex
 
 	// Create the 2D slice to store the world.
 	world := make([][]byte, p.imageHeight)
@@ -34,36 +37,55 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 
 	// Calculate the new state of Game of Life after the given number of turns.
 	for turns := 0; turns < p.turns; turns++ {
-		for y := 0; y < p.imageHeight; y++ {
-			for x := 0; x < p.imageWidth; x++ {
-				AliveCellsAround := 0
+		wg.Add(p.threads)
 
-				// Check for how many alive cells are around the original cell (Ignore the original cell)
-				// Adding the width and then modding it by them deals with out of bound issues
-				for i := -1; i < 2; i++ {
-					for j := -1; j < 2; j++ {
-						if y + i == y && x + j == x {
-							continue
-						} else if world[((y + i) + p.imageHeight) % p.imageHeight][((x + j) + p.imageWidth) % p.imageWidth] == 0xFF {
-							AliveCellsAround++
+		saveY := p.imageHeight/p.threads
+		startY := 0
+		endY := saveY
+		for t := 0; t < p.threads; t++  {
+			go func (startY, endY int) {
+				defer wg.Done()
+
+				for y := startY; y < endY; y++ {
+					for x := 0; x < p.imageWidth; x++ {
+						AliveCellsAround := 0
+
+						// Check for how many alive cells are around the original cell (Ignore the original cell)
+						// Adding the width and then modding it by them deals with out of bound issues
+						for i := -1; i < 2; i++ {
+							for j := -1; j < 2; j++ {
+								if y + i == y && x + j == x {
+									continue
+								} else if world[((y + i) + p.imageHeight) % p.imageHeight][((x + j) + p.imageWidth) % p.imageWidth] == 0xFF {
+									AliveCellsAround++
+								}
+							}
+						}
+
+						// Cases for alive and dead original cells
+						// 'break' isn't needed for Golang switch
+						switch world[y][x] {
+						case 0xFF: // If cell alive
+							if AliveCellsAround < 2 || AliveCellsAround > 3 {
+								m.Lock()
+								marked = append(marked, cell{x, y})
+								m.Unlock()
+							}
+						case 0x00: // If cell dead
+							if AliveCellsAround == 3 {
+								m.Lock()
+								marked = append(marked, cell{x, y})
+								m.Unlock()
+							}
 						}
 					}
 				}
+			}(startY, endY)
 
-				// Cases for alive and dead original cells
-				// 'break' isn't needed for Golang switch
-				switch world[y][x] {
-				case 0xFF: // If cell alive
-					if AliveCellsAround < 2 || AliveCellsAround > 3 {
-						marked = append(marked, cell{x, y})
-					}
-				case 0x00: // If cell dead
-					if AliveCellsAround == 3 {
-						marked = append(marked, cell{x, y})
-					}
-				}
-			}
+			startY = endY
+			endY += saveY
 		}
+		wg.Wait()
 
 		// Kill/resurrect those marked then reset contents of marked
 		for _, cell := range marked {
