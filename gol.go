@@ -8,6 +8,8 @@ import (
 
 // distributor divides the work between workers and interacts with other goroutines.
 func distributor(p golParams, d distributorChans, alive chan []cell) {
+	// Markers of which cells should be killed/resurrected
+	var marked []cell
 
 	// Create the 2D slice to store the world.
 	world := make([][]byte, p.imageHeight)
@@ -34,10 +36,40 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	for turns := 0; turns < p.turns; turns++ {
 		for y := 0; y < p.imageHeight; y++ {
 			for x := 0; x < p.imageWidth; x++ {
-				// Placeholder for the actual Game of Life logic: flips alive cells to dead and dead cells to alive.
-				world[y][x] = world[y][x] ^ 0xFF
+				AliveCellsAround := 0
+
+				// Check for how many alive cells are around the original cell (Ignore the original cell)
+				// Adding the width and then modding it by them deals with out of bound issues
+				for i := -1; i < 2; i++ {
+					for j := -1; j < 2; j++ {
+						if y + i == y && x + j == x {
+							continue
+						} else if world[((y + i) + p.imageHeight) % p.imageHeight][((x + j) + p.imageWidth) % p.imageWidth] == 0xFF {
+							AliveCellsAround++
+						}
+					}
+				}
+
+				// Cases for alive and dead original cells
+				// 'break' isn't needed for Golang switch
+				switch world[y][x] {
+				case 0xFF: // If cell alive
+					if AliveCellsAround < 2 || AliveCellsAround > 3 {
+						marked = append(marked, cell{x, y})
+					}
+				case 0x00: // If cell dead
+					if AliveCellsAround == 3 {
+						marked = append(marked, cell{x, y})
+					}
+				}
 			}
 		}
+
+		// Kill/resurrect those marked then reset contents of marked
+		for _, cell := range marked {
+			world[cell.y][cell.x] = world[cell.y][cell.x] ^ 0xFF
+		}
+		marked = nil
 	}
 
 	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
@@ -48,6 +80,17 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 			if world[y][x] != 0 {
 				finalAlive = append(finalAlive, cell{x: x, y: y})
 			}
+		}
+	}
+
+	// Request the io goroutine to write image with given filename.
+	d.io.command <- ioOutput
+	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight), strconv.Itoa(p.turns)}, "x")
+
+	// Send the finished state of the world to writePgmImage function
+	for y := 0; y < p.imageHeight; y++ {
+		for x := 0; x < p.imageWidth; x++ {
+			d.io.worldState <- world[y][x]
 		}
 	}
 
