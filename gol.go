@@ -5,10 +5,34 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
+	"unicode"
 )
 
+// Read = ioInput, Write = ioOutput
+func readOrWritePgm(c ioCommand, p golParams, d distributorChans, world [][]byte, turns int) {
+	switch c {
+	// Request the io goroutine to read in the image with the given filename.
+	case ioInput:
+		d.io.command <- c
+		d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight)}, "x")
+
+	// Request the io goroutine to write image with given filename.
+	case ioOutput:
+		d.io.command <- c
+		d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight), strconv.Itoa(turns)}, "x")
+
+		// Send the finished state of the world to writePgmImage function
+		for y := 0; y < p.imageHeight; y++ {
+			for x := 0; x < p.imageWidth; x++ {
+				d.io.worldState <- world[y][x]
+			}
+		}
+	}
+}
+
 // distributor divides the work between workers and interacts with other goroutines.
-func distributor(p golParams, d distributorChans, alive chan []cell) {
+func distributor(p golParams, d distributorChans, alive chan []cell, keyChan <-chan rune) {
 	// Markers of which cells should be killed/resurrected
 	var marked []cell
 	var wg sync.WaitGroup
@@ -20,9 +44,8 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		world[i] = make([]byte, p.imageWidth)
 	}
 
-	// Request the io goroutine to read in the image with the given filename.
-	d.io.command <- ioInput
-	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight)}, "x")
+	// Read pgm image
+	readOrWritePgm(ioInput, p, d, world, p.turns)
 
 	// The io goroutine sends the requested image byte by byte, in rows.
 	for y := 0; y < p.imageHeight; y++ {
@@ -36,62 +59,110 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 	}
 
 	// Calculate the new state of Game of Life after the given number of turns.
-	for turns := 0; turns < p.turns; turns++ {
-		wg.Add(p.threads)
-
-		saveY := p.imageHeight/p.threads
-		startY := 0
-		endY := saveY
-		for t := 0; t < p.threads; t++  {
-			go func (startY, endY int) {
-				defer wg.Done()
-
-				for y := startY; y < endY; y++ {
+	turns := 0
+	currentAlive := 0
+	timer := time.After(2 * time.Second)
+	loop : for turns < p.turns {
+		select {
+		// Timer for every 2 seconds
+		case <-timer:
+			// Indicates that this is not a test
+			if keyChan != nil {
+				for y := 0; y < p.imageHeight; y++ {
 					for x := 0; x < p.imageWidth; x++ {
-						AliveCellsAround := 0
-
-						// Check for how many alive cells are around the original cell (Ignore the original cell)
-						// Adding the width and then modding it by them deals with out of bound issues
-						for i := -1; i < 2; i++ {
-							for j := -1; j < 2; j++ {
-								if y + i == y && x + j == x {
-									continue
-								} else if world[((y + i) + p.imageHeight) % p.imageHeight][((x + j) + p.imageWidth) % p.imageWidth] == 0xFF {
-									AliveCellsAround++
-								}
-							}
-						}
-
-						// Cases for alive and dead original cells
-						// 'break' isn't needed for Golang switch
-						switch world[y][x] {
-						case 0xFF: // If cell alive
-							if AliveCellsAround < 2 || AliveCellsAround > 3 {
-								m.Lock()
-								marked = append(marked, cell{x, y})
-								m.Unlock()
-							}
-						case 0x00: // If cell dead
-							if AliveCellsAround == 3 {
-								m.Lock()
-								marked = append(marked, cell{x, y})
-								m.Unlock()
-							}
+						if world[y][x] != 0 {
+							currentAlive++
 						}
 					}
 				}
-			}(startY, endY)
 
-			startY = endY
-			endY += saveY
-		}
-		wg.Wait()
+				fmt.Println("No. of cells alive: ", currentAlive)
+				timer = time.After(2 * time.Second)
+			}
 
-		// Kill/resurrect those marked then reset contents of marked
-		for _, cell := range marked {
-			world[cell.y][cell.x] = world[cell.y][cell.x] ^ 0xFF
+		// Check for keyboard commands
+		default:
+			if keyChan != nil {
+				switch unicode.ToLower(<-keyChan) {
+				case 's':
+					go readOrWritePgm(ioOutput, p, d, world, turns)
+
+				case 'p':
+					wg.Add(1)
+					go func() {
+						if <-keyChan == 'p' {
+							fmt.Println("Continuing")
+							wg.Done()
+						}
+					}()
+					wg.Wait()
+
+				case 'q':
+					break loop
+
+				default:
+					break
+				}
+			}
+
+			turns++
+
+			wg.Add(p.threads)
+
+			saveY := p.imageHeight/p.threads
+			startY := 0
+			endY := saveY
+			for t := 0; t < p.threads; t++  {
+				go func (startY, endY int) {
+					defer wg.Done()
+
+					for y := startY; y < endY; y++ {
+						for x := 0; x < p.imageWidth; x++ {
+							AliveCellsAround := 0
+
+							// Check for how many alive cells are around the original cell (Ignore the original cell)
+							// Adding the width and then modding it by them deals with out of bound issues
+							for i := -1; i < 2; i++ {
+								for j := -1; j < 2; j++ {
+									if y + i == y && x + j == x {
+										continue
+									} else if world[((y + i) + p.imageHeight) % p.imageHeight][((x + j) + p.imageWidth) % p.imageWidth] == 0xFF {
+										AliveCellsAround++
+									}
+								}
+							}
+
+							// Cases for alive and dead original cells
+							// 'break' isn't needed for Golang switch
+							switch world[y][x] {
+							case 0xFF: // If cell alive
+								if AliveCellsAround < 2 || AliveCellsAround > 3 {
+									m.Lock()
+									marked = append(marked, cell{x, y})
+									m.Unlock()
+								}
+							case 0x00: // If cell dead
+								if AliveCellsAround == 3 {
+									m.Lock()
+									marked = append(marked, cell{x, y})
+									m.Unlock()
+								}
+							}
+						}
+					}
+				}(startY, endY)
+
+				startY = endY
+				endY += saveY
+			}
+			wg.Wait()
+
+			// Kill/resurrect those marked then reset contents of marked
+			for _, cell := range marked {
+				world[cell.y][cell.x] = world[cell.y][cell.x] ^ 0xFF
+			}
+			marked = nil
 		}
-		marked = nil
 	}
 
 	// Create an empty slice to store coordinates of cells that are still alive after p.turns are done.
@@ -105,16 +176,8 @@ func distributor(p golParams, d distributorChans, alive chan []cell) {
 		}
 	}
 
-	// Request the io goroutine to write image with given filename.
-	d.io.command <- ioOutput
-	d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight), strconv.Itoa(p.turns)}, "x")
-
-	// Send the finished state of the world to writePgmImage function
-	for y := 0; y < p.imageHeight; y++ {
-		for x := 0; x < p.imageWidth; x++ {
-			d.io.worldState <- world[y][x]
-		}
-	}
+	// Write image
+	readOrWritePgm(ioOutput, p, d, world, turns)
 
 	// Make sure that the Io has finished any output before exiting.
 	d.io.command <- ioCheckIdle

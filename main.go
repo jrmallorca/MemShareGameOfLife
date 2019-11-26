@@ -1,6 +1,8 @@
 package main
 
-import "flag"
+import (
+	"flag"
+)
 
 // golParams provides the details of how to run the Game of Life and which image to load.
 type golParams struct {
@@ -93,7 +95,7 @@ func gameOfLife(p golParams, keyChan <-chan rune) []cell {
 
 	aliveCells := make(chan []cell)
 
-	go distributor(p, dChans, aliveCells)
+	go distributor(p, dChans, aliveCells, keyChan)
 	go pgmIo(p, ioChans)
 
 	alive := <-aliveCells
@@ -104,6 +106,7 @@ func gameOfLife(p golParams, keyChan <-chan rune) []cell {
 // Do not edit until Stage 2.
 func main() {
 	var params golParams
+	//key := make(chan rune)
 
 	flag.IntVar(
 		&params.threads,
@@ -125,7 +128,7 @@ func main() {
 
 	flag.Parse()
 
-	params.turns = 10000000000
+	params.turns = 1
 
 	startControlServer(params)
 	go getKeyboardCommand(nil)
