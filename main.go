@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"unicode"
 )
 
 // golParams provides the details of how to run the Game of Life and which image to load.
@@ -93,45 +94,66 @@ func gameOfLife(p golParams, keyChan <-chan rune) []cell {
 	dChans.io.worldState = worldState
 	ioChans.distributor.worldState = worldState
 
+	// Channels for keyboard commands
+	state := make(chan bool)
+	pause := make(chan bool)
+	quit := make(chan bool)
+
 	aliveCells := make(chan []cell)
 
-	go distributor(p, dChans, aliveCells, keyChan)
+	go distributor(p, dChans, aliveCells, state, pause, quit)
 	go pgmIo(p, ioChans)
 
-	alive := <-aliveCells
-	return alive
+	// -- Keyboard commands --
+	if keyChan != nil {
+		for {
+			switch unicode.ToLower(<-keyChan) {
+			case 's':
+				state <- true
+			case 'p':
+				pause <- true
+			case 'q':
+				quit <- true
+				alive := <-aliveCells
+				return alive
+			}
+		}
+	} else {
+		alive := <-aliveCells
+		return alive
+	}
 }
 
 // main is the function called when starting Game of Life with 'make gol'
 // Do not edit until Stage 2.
 func main() {
 	var params golParams
-	//key := make(chan rune)
+	key := make(chan rune)
 
 	flag.IntVar(
 		&params.threads,
 		"t",
-		4,
+		8,
 		"Specify the number of worker threads to use. Defaults to 8.")
 
 	flag.IntVar(
 		&params.imageWidth,
 		"w",
-		16,
+		512,
 		"Specify the width of the image. Defaults to 512.")
 
 	flag.IntVar(
 		&params.imageHeight,
 		"h",
-		16,
+		512,
 		"Specify the height of the image. Defaults to 512.")
 
 	flag.Parse()
 
-	params.turns = 1
+	params.turns = 1000000000
 
 	startControlServer(params)
-	go getKeyboardCommand(nil)
-	gameOfLife(params, nil)
+	go getKeyboardCommand(key)
+	gameOfLife(params, key)
 	StopControlServer()
 }

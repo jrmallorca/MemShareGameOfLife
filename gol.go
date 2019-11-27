@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 )
 
 // Read = ioInput, Write = ioOutput
@@ -32,7 +31,7 @@ func readOrWritePgm(c ioCommand, p golParams, d distributorChans, world [][]byte
 }
 
 // distributor divides the work between workers and interacts with other goroutines.
-func distributor(p golParams, d distributorChans, alive chan []cell, keyChan <-chan rune) {
+func distributor(p golParams, d distributorChans, alive chan []cell, state, pause, quit chan bool) {
 	// Markers of which cells should be killed/resurrected
 	var marked []cell
 	var wg sync.WaitGroup
@@ -66,45 +65,37 @@ func distributor(p golParams, d distributorChans, alive chan []cell, keyChan <-c
 		select {
 		// Timer for every 2 seconds
 		case <-timer:
-			// Indicates that this is not a test
-			if keyChan != nil {
-				for y := 0; y < p.imageHeight; y++ {
-					for x := 0; x < p.imageWidth; x++ {
-						if world[y][x] != 0 {
-							currentAlive++
-						}
+			for y := 0; y < p.imageHeight; y++ {
+				for x := 0; x < p.imageWidth; x++ {
+					if world[y][x] != 0 {
+						currentAlive++
 					}
 				}
-
-				fmt.Println("No. of cells alive: ", currentAlive)
-				timer = time.After(2 * time.Second)
 			}
 
-		// Check for keyboard commands
-		default:
-			if keyChan != nil {
-				switch unicode.ToLower(<-keyChan) {
-				case 's':
-					go readOrWritePgm(ioOutput, p, d, world, turns)
+			fmt.Println("No. of cells alive: ", currentAlive)
+			currentAlive = 0
+			timer = time.After(2 * time.Second)
 
-				case 'p':
-					wg.Add(1)
-					go func() {
-						if <-keyChan == 'p' {
-							fmt.Println("Continuing")
-							wg.Done()
-						}
-					}()
-					wg.Wait()
+		case <-state:
+			go readOrWritePgm(ioOutput, p, d, world, turns)
 
-				case 'q':
-					break loop
+		case <-pause:
+			go readOrWritePgm(ioOutput, p, d, world, turns)
 
-				default:
-					break
+			wg.Add(1)
+			go func() {
+				if <-pause {
+					fmt.Println("Continuing")
+					wg.Done()
 				}
-			}
+			}()
+			wg.Wait()
 
+		case <-quit:
+			break loop
+
+		default:
 			turns++
 
 			wg.Add(p.threads)
