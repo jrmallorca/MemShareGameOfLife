@@ -22,11 +22,7 @@ func readOrWritePgm(c ioCommand, p golParams, d distributorChans, world [][]byte
 		d.io.filename <- strings.Join([]string{strconv.Itoa(p.imageWidth), strconv.Itoa(p.imageHeight), strconv.Itoa(turns)}, "x")
 
 		// Send the finished state of the world to writePgmImage function
-		for y := 0; y < p.imageHeight; y++ {
-			for x := 0; x < p.imageWidth; x++ {
-				d.io.worldState <- world[y][x]
-			}
-		}
+		d.io.worldState <- world
 	}
 }
 

@@ -33,16 +33,7 @@ func writePgmImage(p golParams, i ioChans) {
 	_, _ = file.WriteString(strconv.Itoa(255))
 	_, _ = file.WriteString("\n")
 
-	world := make([][]byte, p.imageHeight)
-	for i := range world {
-		world[i] = make([]byte, p.imageWidth)
-	}
-
-	for y := 0; y < p.imageHeight; y++ {
-		for x := 0; x < p.imageWidth; x++ {
-			world[y][x] = <- i.distributor.worldState
-		}
-	}
+	world := <- i.distributor.worldState
 
 	for y := 0; y < p.imageHeight; y++ {
 		for x := 0; x < p.imageWidth; x++ {
