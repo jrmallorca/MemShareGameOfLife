@@ -53,6 +53,31 @@ func distributor(p golParams, d distributorChans, alive chan []cell, state, paus
 		}
 	}
 
+	// Initialize variables for y values
+	yParams := make([]int, p.threads + 1)
+	div := p.imageHeight/p.threads
+	total := div * p.threads
+	diff := 0
+
+	// Source size of workers
+	yParams[0] = 0
+	for i := 1; i < p.threads + 1; i++  {
+		yParams[i] = div
+	}
+	
+	// Calculate, if not a power of two, and distribute evenly
+	if total != p.imageHeight {
+		diff = p.imageHeight - total
+		for i := 1; i < diff + 1; i++  {
+			yParams[i] += 1
+		}
+	}
+
+	// Calculate y parameters
+	for i := 1; i < p.threads + 1; i++  {
+		yParams[i] += yParams[i - 1]
+	}
+
 	// Calculate the new state of Game of Life after the given number of turns.
 	turns := 0
 	currentAlive := 0
@@ -96,9 +121,6 @@ func distributor(p golParams, d distributorChans, alive chan []cell, state, paus
 
 			wg.Add(p.threads)
 
-			saveY := p.imageHeight/p.threads
-			startY := 0
-			endY := saveY
 			for t := 0; t < p.threads; t++  {
 				go func (startY, endY int) {
 					defer wg.Done()
@@ -137,10 +159,7 @@ func distributor(p golParams, d distributorChans, alive chan []cell, state, paus
 							}
 						}
 					}
-				}(startY, endY)
-
-				startY = endY
-				endY += saveY
+				}(yParams[t], yParams[t + 1])
 			}
 			wg.Wait()
 
